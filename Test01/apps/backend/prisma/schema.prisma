@@ -1,0 +1,277 @@
+// ============================================================================
+// Realschulabschluss Sachsen - Lernplattform
+// Prisma Schema (SQLite-kompatible Version)
+//
+// HINWEIS ZUR SQLITE-UMSTELLUNG:
+// SQLite unterstuetzt in Prisma weder echte Datenbank-Enums noch den Json-Typ.
+// Enum-Felder sind daher als String abgebildet (siehe src/common/types/enums.ts
+// fuer die gueltigen Werte), Json-Felder als String mit JSON.stringify/parse.
+//
+// NEU: User.canManageQuestions ermoeglicht eine granulare Berechtigung
+// unterhalb der vollen Admin-Rolle - Nutzer koennen ausschliesslich Zugriff
+// auf die Fragenerstellung erhalten, ohne vollen Admin-Panel-Zugriff
+// (Statistiken, Nutzerverwaltung) zu bekommen. Siehe QuestionAccessGuard.
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  firstName    String
+  lastName     String
+  role         String   @default("STUDENT") // "STUDENT" | "ADMIN"
+
+  // Granulare Zusatzberechtigung, unabhaengig von `role`: erlaubt Zugriff auf
+  // Fragenerstellung/-bearbeitung, aber NICHT auf Statistiken/Nutzerverwaltung.
+  canManageQuestions Boolean @default(false)
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  passwordResetTokens PasswordResetToken[]
+
+  testAttempts     TestAttempt[]
+  topicMasteries   TopicMastery[]
+  deficits         Deficit[]
+  studySessions    StudySession[]
+  refreshTokens    RefreshToken[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  revoked   Boolean  @default(false)
+
+  @@map("refresh_tokens")
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@map("password_reset_tokens")
+}
+
+model Subject {
+  id          String   @id @default(uuid())
+  slug        String   @unique
+  name        String
+  description String?
+  icon        String?
+  colorHex    String
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  topics          Topic[]
+  testAttempts    TestAttempt[]
+  topicMasteries  TopicMastery[]
+  deficits        Deficit[]
+
+  @@map("subjects")
+}
+
+model Topic {
+  id          String   @id @default(uuid())
+  subjectId   String
+  subject     Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  slug        String
+  name        String
+  description String?
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  subTopics       SubTopic[]
+  questions       Question[]
+  topicMasteries  TopicMastery[]
+  deficits        Deficit[]
+  testAttempts    TestAttempt[]
+
+  @@unique([subjectId, slug])
+  @@map("topics")
+}
+
+model SubTopic {
+  id               String   @id @default(uuid())
+  topicId          String
+  topic            Topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  slug             String
+  name             String
+  sortOrder        Int      @default(0)
+
+  explanation      String
+  summary          String
+  definitions      String?
+  examples         String?
+  formulas         String?
+  keyTakeaways     String?
+  stepByStepGuides String?
+  commonMistakes   String?
+  tips             String?
+  examTaskExamples String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([topicId, slug])
+  @@map("sub_topics")
+}
+
+model Question {
+  id            String   @id @default(uuid())
+  topicId       String
+  topic         Topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  usage         String   @default("BOTH")
+  difficulty    String   @default("MEDIUM")
+  prompt        String
+  explanation   String
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  createdById   String?
+
+  answers       AnswerOption[]
+  responses     QuestionResponse[]
+
+  @@map("questions")
+}
+
+model AnswerOption {
+  id         String   @id @default(uuid())
+  questionId String
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  text       String
+  isCorrect  Boolean  @default(false)
+  sortOrder  Int      @default(0)
+
+  responses  QuestionResponse[]
+
+  @@map("answer_options")
+}
+
+model TestAttempt {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subjectId   String
+  subject     Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  topicId     String?
+  topic       Topic?   @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  type        String
+  status      String   @default("IN_PROGRESS")
+
+  totalQuestions   Int
+  correctCount     Int      @default(0)
+  scorePercent     Float?
+  timeLimitSeconds Int?
+  startedAt        DateTime @default(now())
+  completedAt      DateTime?
+
+  responses   QuestionResponse[]
+  topicScores TopicScoreBreakdown[]
+
+  @@index([userId, subjectId, type])
+  @@map("test_attempts")
+}
+
+model QuestionResponse {
+  id              String       @id @default(uuid())
+  testAttemptId   String
+  testAttempt     TestAttempt  @relation(fields: [testAttemptId], references: [id], onDelete: Cascade)
+  questionId      String
+  question        Question     @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  selectedAnswerId String?
+  selectedAnswer  AnswerOption? @relation(fields: [selectedAnswerId], references: [id])
+  isCorrect       Boolean      @default(false)
+  answeredAt      DateTime     @default(now())
+
+  @@unique([testAttemptId, questionId])
+  @@map("question_responses")
+}
+
+model TopicScoreBreakdown {
+  id            String      @id @default(uuid())
+  testAttemptId String
+  testAttempt   TestAttempt @relation(fields: [testAttemptId], references: [id], onDelete: Cascade)
+  topicId       String
+  topicName     String
+  correctCount  Int
+  totalCount    Int
+  scorePercent  Float
+  isDeficit     Boolean
+
+  @@map("topic_score_breakdowns")
+}
+
+model TopicMastery {
+  id              String   @id @default(uuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subjectId       String
+  subject         Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  topicId         String
+  topic           Topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  status          String   @default("NOT_STARTED")
+  bestScorePercent Float?
+  lastScorePercent Float?
+  totalStudyTimeSeconds Int @default(0)
+  lastStudiedAt   DateTime?
+  updatedAt       DateTime @updatedAt
+
+  @@unique([userId, topicId])
+  @@map("topic_masteries")
+}
+
+model Deficit {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subjectId    String
+  subject      Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  topicId      String
+  topic        Topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  scorePercent Float
+  priority     Int      @default(0)
+  resolvedAt   DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([userId, topicId])
+  @@map("deficits")
+}
+
+model StudySession {
+  id            String   @id @default(uuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  topicId       String?
+  durationSeconds Int
+  startedAt     DateTime
+  endedAt       DateTime
+
+  @@index([userId, startedAt])
+  @@map("study_sessions")
+}
